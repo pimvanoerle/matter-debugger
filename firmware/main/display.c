@@ -2,9 +2,13 @@
  * On-device live meter for the Waveshare ESP32-C6-Touch-AMOLED-2.16
  * (480x480 CO5300 AMOLED over QSPI, powered through an AXP2101 PMIC).
  *
- * When that board is detected, a task keeps scanning for Thread routers and
- * shows each one with a signal bar, so the probe works with no computer
- * attached. Host commands still work; they share the radio through
+ * When that board is detected, a task keeps scanning and shows, with no
+ * computer attached:
+ *  - every Thread router in earshot with a signal bar, and
+ *  - a spectrum strip: measured energy on each 802.15.4 channel (11-26) in
+ *    front of a blue backdrop marking where Wi-Fi access points sit.
+ * Wi-Fi shows up as a hump about four channels wide; broadband noise such as
+ * USB 3 lifts every channel at once, close to its source. Host commands still work; they share the radio through
  * probe_radio_lock().
  */
 #include "sdkconfig.h"
@@ -56,6 +60,14 @@
 #define MARGIN_X 24
 #define FIRST_ROW_Y 26
 #define MAX_ROWS 15
+#define LAST_ROUTER_ROW 10
+#define LABEL_ROW 11
+#define GRAPH_ROW 12 /* the spectrum uses rows 12-14 */
+#define GRAPH_H (3 * ROW_H)
+#define GRAPH_BAR_H (GRAPH_H - 4) /* the bottom 4 px mark channels that carry Thread */
+#define CHANNELS 16
+#define BAR_W 24
+#define BAR_PITCH 27
 
 #define RGB(r, g, b) ((uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3)))
 #define WHITE RGB(255, 255, 255)
@@ -65,6 +77,7 @@
 #define GREEN RGB(60, 220, 90)
 #define YELLOW RGB(250, 200, 40)
 #define RED RGB(255, 70, 60)
+#define WIFI_BLUE RGB(25, 55, 150)
 
 static esp_lcd_panel_handle_t s_panel;
 static SemaphoreHandle_t s_flushed;
@@ -292,6 +305,70 @@ static void age_routers(void)
     qsort(s_routers, s_router_count, sizeof(router_t), by_network_then_signal);
 }
 
+/* Per 802.15.4 channel 11-26: measured energy, a slowly falling peak, and
+ * the strongest Wi-Fi access point overlapping it (all dBm, -127 = none). */
+static int s_energy[CHANNELS], s_energy_peak[CHANNELS], s_wifi[CHANNELS];
+
+static int clamp(int v, int lo, int hi)
+{
+    return v < lo ? lo : v > hi ? hi : v;
+}
+
+static void draw_spectrum(void)
+{
+    int sorted[CHANNELS];
+    memcpy(sorted, s_energy, sizeof(sorted));
+    for (int i = 1; i < CHANNELS; i++) { /* insertion sort, for the median */
+        for (int j = i; j > 0 && sorted[j] < sorted[j - 1]; j--) {
+            int t = sorted[j];
+            sorted[j] = sorted[j - 1];
+            sorted[j - 1] = t;
+        }
+    }
+    char text[32];
+    snprintf(text, sizeof(text), "NOISE FLOOR %d", sorted[CHANNELS / 2]);
+    strip_clear();
+    strip_text(MARGIN_X, text, WHITE);
+    strip_text(LCD_W - MARGIN_X - 4 * CELL_W, "WIFI", WIFI_BLUE);
+    strip_flush(LABEL_ROW);
+
+    uint32_t thread_channels = 0;
+    for (int i = 0; i < s_router_count; i++) {
+        thread_channels |= 1u << s_routers[i].channel;
+    }
+    for (int part = 0; part < 3; part++) {
+        int top = part * ROW_H; /* this strip covers graph rows top..top+ROW_H */
+        strip_clear();
+        for (int i = 0; i < CHANNELS; i++) {
+            int x = MARGIN_X + i * BAR_PITCH;
+            /* -95 dBm is an empty bar; -45 dBm (energy) or -35 dBm (Wi-Fi) a full one */
+            int wifi = clamp((s_wifi[i] + 95) * GRAPH_BAR_H / 60, 0, GRAPH_BAR_H);
+            int level = clamp((s_energy[i] + 95) * GRAPH_BAR_H / 50, 2, GRAPH_BAR_H);
+            int peak = clamp((s_energy_peak[i] + 95) * GRAPH_BAR_H / 50, 2, GRAPH_BAR_H);
+            uint16_t colour = s_energy[i] >= -75 ? RED : s_energy[i] >= -85 ? YELLOW : GREEN;
+            for (int y = 0; y < ROW_H; y++) {
+                int from_base = GRAPH_BAR_H - (top + y); /* 1 = lowest bar pixel */
+                if (from_base <= 0) {
+                    if (thread_channels & (1u << (i + 11))) {
+                        strip_rect(x, y, BAR_W, 1, CYAN);
+                    }
+                } else if (from_base <= level) {
+                    strip_rect(x + 4, y, BAR_W - 8, 1, colour);
+                    if (from_base <= wifi) {
+                        strip_rect(x, y, 4, 1, WIFI_BLUE);
+                        strip_rect(x + BAR_W - 4, y, 4, 1, WIFI_BLUE);
+                    }
+                } else if (from_base == peak || from_base == peak - 1) {
+                    strip_rect(x + 4, y, BAR_W - 8, 1, WHITE);
+                } else if (from_base <= wifi) {
+                    strip_rect(x, y, BAR_W, 1, WIFI_BLUE);
+                }
+            }
+        }
+        strip_flush(GRAPH_ROW + part);
+    }
+}
+
 static void draw(const char *status)
 {
     int row = 0;
@@ -301,10 +378,16 @@ static void draw(const char *status)
     strip_flush(row++);
 
     const char *net = "";
-    for (int i = 0; i < s_router_count && row < MAX_ROWS; i++) {
+    int i = 0;
+    for (; i < s_router_count; i++) {
         const router_t *r = &s_routers[i];
         char text[32];
-        if (strcmp(net, r->net) != 0 && row < MAX_ROWS - 1) {
+        bool new_net = strcmp(net, r->net) != 0;
+        int rows_left = LAST_ROUTER_ROW - row + 1, needed = new_net ? 2 : 1;
+        if (rows_left < needed || (rows_left == needed && s_router_count - i > 1)) {
+            break; /* keep the last row for the "+N MORE" line */
+        }
+        if (new_net) {
             net = r->net;
             snprintf(text, sizeof(text), "%s CH%d", r->net, r->channel);
             strip_clear();
@@ -330,10 +413,17 @@ static void draw(const char *status)
         strip_text(MARGIN_X, "NO THREAD IN RANGE", RED);
         strip_flush(row++);
         strip_clear();
+    } else if (i < s_router_count) {
+        char text[32];
+        snprintf(text, sizeof(text), "+%d MORE", s_router_count - i);
+        strip_text(MARGIN_X, text, GREY);
+        strip_flush(row++);
+        strip_clear();
     }
-    while (row < MAX_ROWS) {
+    while (row <= LAST_ROUTER_ROW) {
         strip_flush(row++);
     }
+    draw_spectrum();
 }
 
 static void scan_into_table(int channel)
@@ -349,9 +439,65 @@ static void scan_into_table(int channel)
     cJSON_Delete(found);
 }
 
+static void scan_energy(void)
+{
+    const char *err = NULL;
+    cJSON *args = cJSON_CreateObject();
+    cJSON_AddNumberToObject(args, "duration_ms", 40);
+    probe_radio_lock();
+    cJSON *found = thread_energy(args, &err);
+    probe_radio_unlock();
+    cJSON_Delete(args);
+    const cJSON *item;
+    cJSON_ArrayForEach(item, found) {
+        int i = cJSON_GetObjectItem(item, "channel")->valueint - 11;
+        int rssi = cJSON_GetObjectItem(item, "max_rssi")->valueint;
+        if (i >= 0 && i < CHANNELS) {
+            s_energy[i] = rssi;
+            s_energy_peak[i] = rssi > s_energy_peak[i] - 1 ? rssi : s_energy_peak[i] - 1;
+        }
+    }
+    cJSON_Delete(found);
+}
+
+/* Marks each 802.15.4 channel with the strongest access point overlapping it. */
+static void scan_wifi(void)
+{
+    const char *err = NULL;
+    probe_radio_lock();
+    cJSON *found = wifi_scan(NULL, &err);
+    probe_radio_unlock();
+    if (!found) {
+        return; /* keep the previous picture */
+    }
+    for (int i = 0; i < CHANNELS; i++) {
+        s_wifi[i] = -127;
+    }
+    const cJSON *ap;
+    cJSON_ArrayForEach(ap, found) {
+        int channel = cJSON_GetObjectItem(ap, "channel")->valueint;
+        int rssi = cJSON_GetObjectItem(ap, "rssi")->valueint;
+        const char *secondary = cJSON_GetStringValue(cJSON_GetObjectItem(ap, "secondary"));
+        int centre = channel == 14 ? 2484 : 2407 + 5 * channel;
+        int low = centre - 11 - (secondary && strcmp(secondary, "below") == 0 ? 20 : 0);
+        int high = centre + 11 + (secondary && strcmp(secondary, "above") == 0 ? 20 : 0);
+        for (int i = 0; i < CHANNELS; i++) {
+            int f = 2405 + 5 * i;
+            if (f + 1 >= low && f - 1 <= high && rssi > s_wifi[i]) {
+                s_wifi[i] = rssi;
+            }
+        }
+    }
+    cJSON_Delete(found);
+}
+
 static void display_task(void *arg)
 {
     (void)arg;
+    for (int i = 0; i < CHANNELS; i++) {
+        s_energy[i] = s_energy_peak[i] = -95;
+        s_wifi[i] = -127;
+    }
     draw("SCAN");
     for (unsigned round = 0;; round++) {
         /* A full sweep now and then finds new networks; in between, only the
@@ -370,6 +516,10 @@ static void display_task(void *arg)
             }
         }
         age_routers();
+        scan_energy();
+        if (round % 40 == 0) {
+            scan_wifi(); /* access points move rarely; this takes a few seconds */
+        }
         draw(round % 2 ? "LIVE" : "LIVE.");
         vTaskDelay(pdMS_TO_TICKS(50));
     }
@@ -386,7 +536,7 @@ void display_start(void)
         }
         return;
     }
-    xTaskCreate(display_task, "display", 6144, NULL, 4, NULL);
+    xTaskCreate(display_task, "display", 8192, NULL, 4, NULL);
 }
 
 #else
