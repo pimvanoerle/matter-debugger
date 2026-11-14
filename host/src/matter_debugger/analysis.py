@@ -92,7 +92,8 @@ def analyse_survey(survey: dict) -> list[dict]:
                 "warning", f"{len(nets)} separate Thread networks in range",
                 f"Found {names}. Border routers from different ecosystems each make their own "
                 "network unless they share credentials; devices on one cannot use routers on the "
-                "other. Ignore this if the extra network is a neighbour's."))
+                "other. Harmless if the extra one is a neighbour's, or a private link such as a Nest "
+                "thermostat and its Heat Link, which run their own small Thread network."))
         for net in nets.values():
             label = f"Thread network '{net['name']}' (ch {net['channel']})"
             n, best = len(net["routers"]), net["best_rssi"]

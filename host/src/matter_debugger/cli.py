@@ -104,8 +104,9 @@ def survey(port: str | None, label: str | None, log: str | None, as_json: bool) 
 
 @main.command()
 @click.argument("target", required=False)
+@click.option("--log", type=click.Path(dir_okay=False), help="Append every reading to this JSONL file.")
 @click.pass_obj
-def track(port: str | None, target: str | None) -> None:
+def track(port: str | None, target: str | None, log: str | None) -> None:
     """Live signal meter for Thread routers; walk around to find where one is.
 
     TARGET is the end of a router address (e.g. 715a) or part of a network name.
@@ -132,6 +133,9 @@ def track(port: str | None, target: str | None) -> None:
             while True:
                 heard = {r["ext_addr"]: r["rssi"]
                          for ch in channels for r in probe.call("thread_discover", channel=ch)}
+                if log:
+                    with open(log, "a") as f:
+                        f.write(json.dumps({"time": time.time(), "rssi": {a: heard[a] for a in rows if a in heard}}) + "\n")
                 lines = []
                 for addr, row in rows.items():
                     if addr in heard:

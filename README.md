@@ -91,6 +91,8 @@ signal live. Run `matter-debugger track` to list what is in range, then:
 matter-debugger track 715a        # end of a router address, or part of a network name
 ```
 
+Add `--log walk.jsonl` to record every reading with a timestamp while you walk.
+
 ### For agents
 
 ```sh

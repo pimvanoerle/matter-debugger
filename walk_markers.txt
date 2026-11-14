@@ -1,0 +1,15 @@
+1794687768 kitchen (marker written when message was read)
+1794687831 dining
+1794687854 kitchen left
+1794687874 kitchen right
+1794687909 living left
+1794687936 living right
+1794687980 downstairs left
+1794688004 front door left
+1794688028 front bed right
+1794688066 middle bath right
+1794688111 bijkeuken left
+1794688138 master bed right
+1794688180 study front left
+1794688214 study rear left
+1794688398 living couch middle
