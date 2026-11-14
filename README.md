@@ -53,9 +53,17 @@ Sub-GHz radios such as the CC1101 cannot receive Thread.
 ### Standalone screen
 
 On a [Waveshare ESP32-C6-Touch-AMOLED-2.16](https://docs.waveshare.com/ESP32-C6-Touch-AMOLED-2.16)
-the firmware detects the board and shows a live meter on its screen: every
-Thread router in earshot, grouped by network, with a signal bar. It needs only
-power, so it works from a battery or power bank with no computer attached.
+the firmware detects the board and shows a live meter on its screen. It needs
+only power, so it works from a battery or power bank with no computer attached.
+
+- **Router list**: every Thread router in earshot, grouped by network, with a
+  signal bar. The BOOT button turns the page when the list is long.
+- **Spectrum strip**: measured energy on each 802.15.4 channel (11 to 26, left
+  to right), with a white tick for the recent peak. A blue backdrop shows where
+  Wi-Fi access points sit, and a cyan foot marks channels that carry Thread.
+  Wi-Fi traffic appears as a hump about four channels wide; broadband noise,
+  such as from a USB 3 port, lifts every channel at once near its source.
+
 Commands over USB keep working while it runs. Other ESP32-C6 boards run without
 a screen.
 

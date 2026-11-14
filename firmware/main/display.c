@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "driver/spi_master.h"
 #include "esp_check.h"
@@ -47,6 +48,7 @@
 #define PIN_LCD_D2 3
 #define PIN_LCD_D3 4
 #define PIN_LCD_CS 15
+#define PIN_BOOT_BUTTON 9 /* the ESP32-C6 BOOT button, low when pressed */
 #define PMIC_ADDR 0x34
 #define PMIC_REG_LDO_ONOFF 0x90
 #define PMIC_REG_ALDO3_VOLT 0x94 /* 0.5 V + 0.1 V per step */
@@ -259,6 +261,10 @@ typedef struct {
 
 static router_t s_routers[MAX_ROUTERS];
 static int s_router_count;
+static int s_page;                 /* which page of the router list is shown */
+static SemaphoreHandle_t s_ui_lock; /* guards the tables above and the strip buffer */
+static SemaphoreHandle_t s_button;
+static const char *s_status = "SCAN";
 
 static void note_router(const cJSON *item)
 {
@@ -372,35 +378,42 @@ static void draw_spectrum(void)
 static void draw(const char *status)
 {
     int row = 0;
+    /* The list is network headings and routers; show one page of it. */
+    enum { PAGE_ROWS = LAST_ROUTER_ROW };
+    int lines[2 * MAX_ROUTERS], line_count = 0; /* >= 0: router index, < 0: heading for router -n-1 */
+    for (int i = 0; i < s_router_count; i++) {
+        if (i == 0 || strcmp(s_routers[i - 1].net, s_routers[i].net) != 0) {
+            lines[line_count++] = -i - 1;
+        }
+        lines[line_count++] = i;
+    }
+    int pages = (line_count + PAGE_ROWS - 1) / PAGE_ROWS;
+    s_page = pages ? s_page % pages : 0;
+
+    char text[32];
+    if (pages > 1) {
+        snprintf(text, sizeof(text), "%d/%d", s_page + 1, pages);
+    } else {
+        strlcpy(text, status, sizeof(text));
+    }
     strip_clear();
     strip_text(MARGIN_X, "THREAD ROUTERS", WHITE);
-    strip_text(LCD_W - MARGIN_X - CELL_W * (int)strlen(status), status, GREY);
+    strip_text(LCD_W - MARGIN_X - CELL_W * (int)strlen(text), text, GREY);
     strip_flush(row++);
 
-    const char *net = "";
-    int i = 0;
-    for (; i < s_router_count; i++) {
-        const router_t *r = &s_routers[i];
-        char text[32];
-        bool new_net = strcmp(net, r->net) != 0;
-        int rows_left = LAST_ROUTER_ROW - row + 1, needed = new_net ? 2 : 1;
-        if (rows_left < needed || (rows_left == needed && s_router_count - i > 1)) {
-            break; /* keep the last row for the "+N MORE" line */
-        }
-        if (new_net) {
-            net = r->net;
+    for (int n = s_page * PAGE_ROWS; n < line_count && row <= LAST_ROUTER_ROW; n++) {
+        const router_t *r = &s_routers[lines[n] < 0 ? -lines[n] - 1 : lines[n]];
+        strip_clear();
+        if (lines[n] < 0) {
             snprintf(text, sizeof(text), "%s CH%d", r->net, r->channel);
-            strip_clear();
             strip_text(MARGIN_X, text, CYAN);
             strip_flush(row++);
+            continue;
         }
         bool stale = r->missed > 2;
         uint16_t colour = stale ? GREY : r->rssi >= -70 ? GREEN : r->rssi >= -80 ? YELLOW : RED;
         int bar_x = MARGIN_X + 5 * CELL_W, bar_w = 250;
-        int level = (r->rssi + 95) * bar_w / 60; /* -95 dBm empty, -35 dBm full */
-        level = level < 0 ? 0 : level > bar_w ? bar_w : level;
-
-        strip_clear();
+        int level = clamp((r->rssi + 95) * bar_w / 60, 0, bar_w); /* -95 dBm empty, -35 dBm full */
         strip_text(MARGIN_X, r->addr + 12, stale ? GREY : WHITE);
         strip_rect(bar_x, 4, bar_w, 16, DARK);
         strip_rect(bar_x, 4, level, 16, colour);
@@ -411,12 +424,6 @@ static void draw(const char *status)
     strip_clear();
     if (s_router_count == 0) {
         strip_text(MARGIN_X, "NO THREAD IN RANGE", RED);
-        strip_flush(row++);
-        strip_clear();
-    } else if (i < s_router_count) {
-        char text[32];
-        snprintf(text, sizeof(text), "+%d MORE", s_router_count - i);
-        strip_text(MARGIN_X, text, GREY);
         strip_flush(row++);
         strip_clear();
     }
@@ -432,10 +439,12 @@ static void scan_into_table(int channel)
     probe_radio_lock();
     cJSON *found = thread_discover_channel(channel, &err);
     probe_radio_unlock();
+    xSemaphoreTake(s_ui_lock, portMAX_DELAY);
     const cJSON *item;
     cJSON_ArrayForEach(item, found) {
         note_router(item);
     }
+    xSemaphoreGive(s_ui_lock);
     cJSON_Delete(found);
 }
 
@@ -448,6 +457,7 @@ static void scan_energy(void)
     cJSON *found = thread_energy(args, &err);
     probe_radio_unlock();
     cJSON_Delete(args);
+    xSemaphoreTake(s_ui_lock, portMAX_DELAY);
     const cJSON *item;
     cJSON_ArrayForEach(item, found) {
         int i = cJSON_GetObjectItem(item, "channel")->valueint - 11;
@@ -457,6 +467,7 @@ static void scan_energy(void)
             s_energy_peak[i] = rssi > s_energy_peak[i] - 1 ? rssi : s_energy_peak[i] - 1;
         }
     }
+    xSemaphoreGive(s_ui_lock);
     cJSON_Delete(found);
 }
 
@@ -470,6 +481,7 @@ static void scan_wifi(void)
     if (!found) {
         return; /* keep the previous picture */
     }
+    xSemaphoreTake(s_ui_lock, portMAX_DELAY);
     for (int i = 0; i < CHANNELS; i++) {
         s_wifi[i] = -127;
     }
@@ -488,6 +500,7 @@ static void scan_wifi(void)
             }
         }
     }
+    xSemaphoreGive(s_ui_lock);
     cJSON_Delete(found);
 }
 
@@ -498,7 +511,9 @@ static void display_task(void *arg)
         s_energy[i] = s_energy_peak[i] = -95;
         s_wifi[i] = -127;
     }
-    draw("SCAN");
+    xSemaphoreTake(s_ui_lock, portMAX_DELAY);
+    draw(s_status);
+    xSemaphoreGive(s_ui_lock);
     for (unsigned round = 0;; round++) {
         /* A full sweep now and then finds new networks; in between, only the
          * channels already known to carry Thread are scanned, which is fast. */
@@ -515,19 +530,47 @@ static void display_task(void *arg)
                 }
             }
         }
-        age_routers();
         scan_energy();
         if (round % 40 == 0) {
             scan_wifi(); /* access points move rarely; this takes a few seconds */
         }
-        draw(round % 2 ? "LIVE" : "LIVE.");
+        xSemaphoreTake(s_ui_lock, portMAX_DELAY);
+        age_routers();
+        s_status = round % 2 ? "LIVE" : "LIVE.";
+        draw(s_status);
+        xSemaphoreGive(s_ui_lock);
         vTaskDelay(pdMS_TO_TICKS(50));
+    }
+}
+
+static void IRAM_ATTR on_button(void *arg)
+{
+    (void)arg;
+    BaseType_t woken = pdFALSE;
+    xSemaphoreGiveFromISR(s_button, &woken);
+    portYIELD_FROM_ISR(woken);
+}
+
+/* Each press of the BOOT button shows the next page of the router list. */
+static void button_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        xSemaphoreTake(s_button, portMAX_DELAY);
+        xSemaphoreTake(s_ui_lock, portMAX_DELAY);
+        s_page++;
+        draw(s_status);
+        xSemaphoreGive(s_ui_lock);
+        vTaskDelay(pdMS_TO_TICKS(250)); /* debounce */
+        xSemaphoreTake(s_button, 0);
     }
 }
 
 void display_start(void)
 {
     s_flushed = xSemaphoreCreateBinary();
+    s_ui_lock = xSemaphoreCreateMutex();
+    s_button = xSemaphoreCreateBinary();
     s_strip = heap_caps_malloc(LCD_W * ROW_H * sizeof(uint16_t), MALLOC_CAP_DMA);
     esp_err_t rc = s_strip ? panel_init() : ESP_ERR_NO_MEM;
     if (rc != ESP_OK) {
@@ -537,6 +580,17 @@ void display_start(void)
         return;
     }
     xTaskCreate(display_task, "display", 8192, NULL, 4, NULL);
+
+    gpio_config_t button = {
+        .pin_bit_mask = 1ULL << PIN_BOOT_BUTTON,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .intr_type = GPIO_INTR_NEGEDGE,
+    };
+    if (gpio_config(&button) == ESP_OK && gpio_install_isr_service(0) == ESP_OK &&
+        gpio_isr_handler_add(PIN_BOOT_BUTTON, on_button, NULL) == ESP_OK) {
+        xTaskCreate(button_task, "button", 4096, NULL, 5, NULL);
+    }
 }
 
 #else
