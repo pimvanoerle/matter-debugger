@@ -57,3 +57,10 @@ def test_survey_skips_thread_without_radio():
     })
     result = Probe(transport=io).survey()
     assert "thread" not in result and result["wifi"] == []
+
+
+def test_discover_merges_rounds():
+    io = FakeSerial({"thread_discover": [
+        '{"id": {id}, "ok": true, "data": [{"ext_addr": "aa", "network_name": "n", "rssi": -60}]}']})
+    (router,) = Probe(transport=io).discover(rounds=2, channel=23)
+    assert router["heard"] == 2

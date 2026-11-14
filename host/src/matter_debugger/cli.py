@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 import click
 
@@ -93,9 +94,60 @@ def survey(port: str | None, label: str | None, log: str | None, as_json: bool) 
     for xp, net in analysis.thread_networks(result.get("thread", [])).items():
         click.echo(f"  Thread '{net['name']}' ch {net['channel']} xpan {xp}: "
                    f"{len(net['routers'])} router(s), best {net['best_rssi']} dBm")
+        for r in net["routers"]:
+            click.echo(f"    …{r['ext_addr'][-4:]} {analysis.signal_bar(r['rssi'], 20)} {r['rssi']} dBm"
+                       + (f"  (answered {r['heard']} of 3 scans)" if r.get("heard", 3) < 3 else ""))
     click.echo(f"  Wi-Fi: {len(result['wifi'])} access point(s); "
                f"BLE: {result['ble']['advertisers']} advertiser(s)")
     print_findings(result["findings"])
+
+
+@main.command()
+@click.argument("target", required=False)
+@click.pass_obj
+def track(port: str | None, target: str | None) -> None:
+    """Live signal meter for Thread routers; walk around to find where one is.
+
+    TARGET is the end of a router address (e.g. 715a) or part of a network name.
+    Without it, lists what is in range. Stop with Ctrl-C.
+    """
+    with open_probe(port) as probe:
+        try:
+            if "thread" not in probe.call("info").get("capabilities", []):
+                raise click.ClickException("this probe has no 802.15.4 radio")
+            click.echo("Looking for Thread routers...")
+            found = probe.discover(rounds=3)
+            wanted = [r for r in found if target and (
+                r["ext_addr"].endswith(target.lower()) or target.lower() in r["network_name"].lower())]
+            if not wanted:
+                if target:
+                    click.echo(f"Nothing matching '{target}'. In range:")
+                for r in found:
+                    click.echo(f"  {r['ext_addr'][-4:]}  {r['network_name']}  ch {r['channel']}  {r['rssi']} dBm")
+                return
+            channels = sorted({r["channel"] for r in wanted})
+            rows = {r["ext_addr"]: {"name": r["network_name"], "rssi": None, "peak": r["rssi"], "age": 0}
+                    for r in wanted}
+            click.echo("Stop with Ctrl-C.\n" + "\n" * (len(rows) - 1), nl=False)
+            while True:
+                heard = {r["ext_addr"]: r["rssi"]
+                         for ch in channels for r in probe.call("thread_discover", channel=ch)}
+                lines = []
+                for addr, row in rows.items():
+                    if addr in heard:
+                        row.update(rssi=heard[addr], age=0, peak=max(row["peak"], heard[addr]))
+                    else:
+                        row["age"] += 1
+                        if row["age"] >= 3:  # three misses in a row: treat as out of range
+                            row["rssi"] = None
+                    reading = f"{row['rssi']:>4} dBm" if row["rssi"] is not None else " no reply"
+                    lines.append(f"…{addr[-4:]} {row['name']:<16} {analysis.signal_bar(row['rssi'])} "
+                                 f"{reading}  peak {row['peak']}")
+                click.echo(f"\033[{len(lines)}A" + "".join(f"\r\033[K{line}\n" for line in lines), nl=False)
+        except ProbeError as e:
+            raise click.ClickException(str(e))
+        except KeyboardInterrupt:
+            click.echo()
 
 
 @main.command()

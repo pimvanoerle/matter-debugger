@@ -114,7 +114,7 @@ static void on_energy(otEnergyScanResult *r, void *ctx)
 }
 
 /* Starts a scan under the OpenThread lock and waits for its end marker. */
-static cJSON *run_scan(bool energy, uint16_t duration_ms, TickType_t timeout, const char **err)
+static cJSON *run_scan(bool energy, uint32_t channels, uint16_t duration_ms, TickType_t timeout, const char **err)
 {
     s_results = cJSON_CreateArray();
     xSemaphoreTake(s_done, 0);
@@ -126,8 +126,8 @@ static cJSON *run_scan(bool energy, uint16_t duration_ms, TickType_t timeout, co
         rc = otIp6SetEnabled(ot, true);
     }
     if (rc == OT_ERROR_NONE) {
-        rc = energy ? otLinkEnergyScan(ot, 0, duration_ms, on_energy, NULL)
-                    : otThreadDiscover(ot, 0, OT_PANID_BROADCAST, false, false, on_discover, NULL);
+        rc = energy ? otLinkEnergyScan(ot, channels, duration_ms, on_energy, NULL)
+                    : otThreadDiscover(ot, channels, OT_PANID_BROADCAST, false, false, on_discover, NULL);
     }
     esp_openthread_lock_release();
 
@@ -160,14 +160,19 @@ static cJSON *run_scan(bool energy, uint16_t duration_ms, TickType_t timeout, co
 
 cJSON *thread_discover(const cJSON *args, const char **err)
 {
-    (void)args;
-    return run_scan(false, 0, pdMS_TO_TICKS(30000), err);
+    /* "channel": 11-26 limits the scan to one channel (about 0.3 s); 0 scans all. */
+    int channel = probe_arg_int(args, "channel", 0, 0, 26);
+    if (channel != 0 && channel < 11) {
+        *err = "channel must be 11-26";
+        return NULL;
+    }
+    return run_scan(false, channel ? 1u << channel : 0, 0, pdMS_TO_TICKS(30000), err);
 }
 
 cJSON *thread_energy(const cJSON *args, const char **err)
 {
     int per_channel_ms = probe_arg_int(args, "duration_ms", 200, 20, 2000);
-    return run_scan(true, per_channel_ms, pdMS_TO_TICKS(16 * per_channel_ms + 5000), err);
+    return run_scan(true, 0, per_channel_ms, pdMS_TO_TICKS(16 * per_channel_ms + 5000), err);
 }
 
 #else /* no 802.15.4 radio on this chip */

@@ -34,9 +34,13 @@ def serve(port: str | None = None) -> None:
         return result
 
     @server.tool()
-    def thread_discover() -> list:
-        """Thread routers in radio range: network name, extended PAN ID, channel, RSSI, LQI."""
-        return run("thread_discover")
+    def thread_discover(rounds: int = 3, channel: int = 0) -> list:
+        """Thread routers in radio range: network name, extended PAN ID, address, channel,
+        best RSSI, and "heard" (how many of `rounds` scans each answered; one scan often
+        misses routers). `channel` 11-26 scans only that channel, which takes about 0.3 s
+        per round instead of 5 s; use it to follow one router's signal while it is moved."""
+        with Probe(port) as probe:
+            return probe.discover(rounds, channel)
 
     @server.tool()
     def thread_energy(duration_ms: int = 200) -> list:

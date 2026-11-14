@@ -75,6 +75,13 @@ Then walk around:
 matter-debugger survey --label kitchen --log survey.jsonl
 ```
 
+To find where a particular router (or a whole network) physically is, follow its
+signal live. Run `matter-debugger track` to list what is in range, then:
+
+```sh
+matter-debugger track 715a        # end of a router address, or part of a network name
+```
+
 ### For agents
 
 ```sh
@@ -96,7 +103,8 @@ do not start with `{` are log output.
 ```
 
 Commands: `info`, `thread_discover`, `thread_energy`, `wifi_scan`, `ble_scan`.
-Scans take an optional `"args": {"duration_ms": N}`.
+Scans take an optional `"args": {"duration_ms": N}`. `thread_discover` takes
+`"channel": 11-26` to scan one channel only (about 0.3 s instead of 5 s).
 
 ## Roadmap
 

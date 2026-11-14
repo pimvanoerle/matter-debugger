@@ -10,6 +10,8 @@ import time
 import serial
 from serial.tools import list_ports
 
+from .analysis import merge_routers
+
 ESPRESSIF_VID = 0x303A
 
 # Generous per-command timeouts in seconds; scans block until they finish.
@@ -84,12 +86,17 @@ class Probe:
                 return msg.get("data")
         raise ProbeError(f"{cmd}: no reply from probe within {timeout or TIMEOUTS.get(cmd, 5)}s")
 
-    def survey(self, ble_ms: int = 5000) -> dict:
+    def discover(self, rounds: int = 1, channel: int = 0) -> list[dict]:
+        """Thread discovery repeated `rounds` times and merged (see merge_routers)."""
+        args = {"channel": channel} if channel else {}
+        return merge_routers([self.call("thread_discover", **args) for _ in range(rounds)])
+
+    def survey(self, ble_ms: int = 5000, rounds: int = 3) -> dict:
         """Run every scan the probe supports and return them in one dict."""
         info = self.call("info")
         out = {"time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "info": info}
         if "thread" in info.get("capabilities", []):
-            out["thread"] = self.call("thread_discover")
+            out["thread"] = self.discover(rounds)
             out["energy"] = self.call("thread_energy")
         out["wifi"] = self.call("wifi_scan")
         out["ble"] = self.call("ble_scan", duration_ms=ble_ms)

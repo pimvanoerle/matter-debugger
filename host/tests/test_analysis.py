@@ -9,6 +9,20 @@ def titles(findings, level):
     return [f["title"] for f in findings if f["level"] == level]
 
 
+def test_merge_routers_keeps_best_rssi_and_counts_scans():
+    a1 = {"ext_addr": "aa", "network_name": "n", "rssi": -70}
+    a2 = {"ext_addr": "aa", "network_name": "n", "rssi": -60}
+    b = {"ext_addr": "bb", "network_name": "n", "rssi": -80}
+    merged = a.merge_routers([[a1, b], [a2], []])
+    assert [(r["ext_addr"], r["rssi"], r["heard"]) for r in merged] == [("aa", -60, 2), ("bb", -80, 1)]
+
+
+def test_signal_bar():
+    assert a.signal_bar(-95, 10) == "░" * 10 and a.signal_bar(-20, 10) == "█" * 10
+    assert a.signal_bar(-65, 10) == "█" * 5 + "░" * 5
+    assert a.signal_bar(None, 4) == "░░░░"
+
+
 def test_channel_overlap():
     assert a.thread_freq(11) == 2405 and a.thread_freq(26) == 2480
     assert a.overlaps(15, 1) is False  # 2425 vs 2401-2423

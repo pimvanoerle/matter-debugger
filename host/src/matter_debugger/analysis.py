@@ -36,6 +36,26 @@ def overlaps(thread_channel: int, wifi_channel: int, secondary: str = "none") ->
     return f + 1 >= low and f - 1 <= high
 
 
+def merge_routers(rounds: list[list[dict]]) -> list[dict]:
+    """Combine several discovery scans: one entry per router with its best RSSI
+    and "heard", the number of scans it answered. Single scans miss routers."""
+    merged: dict[str, dict] = {}
+    for scan in rounds:
+        for ext_addr in {r["ext_addr"] for r in scan}:
+            best = max((r for r in scan if r["ext_addr"] == ext_addr), key=lambda r: r["rssi"])
+            entry = merged.setdefault(ext_addr, {**best, "heard": 0})
+            entry["heard"] += 1
+            if best["rssi"] > entry["rssi"]:
+                entry.update(rssi=best["rssi"], lqi=best.get("lqi"))
+    return sorted(merged.values(), key=lambda r: (r["network_name"], -r["rssi"]))
+
+
+def signal_bar(rssi: int | None, width: int = 30, low: int = -95, high: int = -35) -> str:
+    """A text meter for an RSSI in dBm; empty when there is no reading."""
+    filled = 0 if rssi is None else round(width * (min(max(rssi, low), high) - low) / (high - low))
+    return "█" * filled + "░" * (width - filled)
+
+
 def thread_networks(routers: list[dict]) -> dict[str, dict]:
     """Group discovered routers by extended PAN ID."""
     nets: dict[str, dict] = {}
