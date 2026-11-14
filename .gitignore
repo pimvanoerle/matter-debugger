@@ -13,3 +13,5 @@ dist/
 # survey logs can contain SSIDs and device addresses
 *.jsonl
 .DS_Store
+# walk notes name rooms in a real house
+walk_markers.txt
