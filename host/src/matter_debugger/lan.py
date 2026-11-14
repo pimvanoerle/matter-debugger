@@ -65,6 +65,7 @@ def scan(seconds: float = 6.0) -> dict:
                     "addresses": addresses,
                     "network_name": txt.get("nn"),
                     "ext_pan_id": txt.get("xp"),
+                    "ext_addr": txt.get("xa"),
                     "vendor": txt.get("vn"),
                     "model": txt.get("mn"),
                     "thread_version": txt.get("tv"),
