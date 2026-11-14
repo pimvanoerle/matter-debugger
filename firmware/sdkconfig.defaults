@@ -1,0 +1,12 @@
+# Console on the native USB port: works on every S3/C6 board, no UART bridge needed.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# Keep the serial line clean for JSON; logs are warnings and up only.
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y

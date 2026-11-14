@@ -1,0 +1,15 @@
+# firmware
+firmware/build/
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/managed_components/
+firmware/dependencies.lock
+# host
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+dist/
+# survey logs can contain SSIDs and device addresses
+*.jsonl
+.DS_Store
