@@ -158,15 +158,19 @@ static cJSON *run_scan(bool energy, uint32_t channels, uint16_t duration_ms, Tic
     return NULL;
 }
 
-cJSON *thread_discover(const cJSON *args, const char **err)
+cJSON *thread_discover_channel(int channel, const char **err)
 {
-    /* "channel": 11-26 limits the scan to one channel (about 0.3 s); 0 scans all. */
-    int channel = probe_arg_int(args, "channel", 0, 0, 26);
-    if (channel != 0 && channel < 11) {
+    if (channel != 0 && (channel < 11 || channel > 26)) {
         *err = "channel must be 11-26";
         return NULL;
     }
     return run_scan(false, channel ? 1u << channel : 0, 0, pdMS_TO_TICKS(30000), err);
+}
+
+cJSON *thread_discover(const cJSON *args, const char **err)
+{
+    /* "channel": 11-26 limits the scan to one channel (about 0.3 s); 0 scans all. */
+    return thread_discover_channel(probe_arg_int(args, "channel", 0, 0, 26), err);
 }
 
 cJSON *thread_energy(const cJSON *args, const char **err)
@@ -181,11 +185,17 @@ void thread_init(void)
 {
 }
 
+cJSON *thread_discover_channel(int channel, const char **err)
+{
+    (void)channel;
+    *err = "this chip has no 802.15.4 radio (use an ESP32-C6)";
+    return NULL;
+}
+
 cJSON *thread_discover(const cJSON *args, const char **err)
 {
     (void)args;
-    *err = "this chip has no 802.15.4 radio (use an ESP32-C6)";
-    return NULL;
+    return thread_discover_channel(0, err);
 }
 
 cJSON *thread_energy(const cJSON *args, const char **err)

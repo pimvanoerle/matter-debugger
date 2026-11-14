@@ -19,12 +19,25 @@
 #include "esp_netif.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "nvs_flash.h"
 #include "sdkconfig.h"
 
 #include "probe.h"
 
 #define LINE_MAX_LEN 512
+
+static SemaphoreHandle_t s_radio_lock;
+
+void probe_radio_lock(void)
+{
+    xSemaphoreTake(s_radio_lock, portMAX_DELAY);
+}
+
+void probe_radio_unlock(void)
+{
+    xSemaphoreGive(s_radio_lock);
+}
 
 int probe_arg_int(const cJSON *args, const char *name, int def, int min, int max)
 {
@@ -112,7 +125,14 @@ static void handle_line(const char *line)
         for (size_t i = 0; i < sizeof(s_commands) / sizeof(s_commands[0]); i++) {
             if (strcmp(cmd->valuestring, s_commands[i].name) == 0) {
                 err = NULL;
+                bool scan = s_commands[i].fn != cmd_info;
+                if (scan) {
+                    probe_radio_lock();
+                }
                 data = s_commands[i].fn(cJSON_GetObjectItem(req, "args"), &err);
+                if (scan) {
+                    probe_radio_unlock();
+                }
                 if (!data && !err) {
                     err = "command failed";
                 }
@@ -149,7 +169,9 @@ void app_main(void)
     ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&usb_cfg));
     usb_serial_jtag_vfs_use_driver();
 
+    s_radio_lock = xSemaphoreCreateMutex();
     thread_init();
+    display_start();
 
     static char line[LINE_MAX_LEN];
     size_t len = 0;

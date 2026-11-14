@@ -50,6 +50,15 @@ Thread runs on IEEE 802.15.4 at 2.4 GHz, so the chip matters more than its speed
 
 Sub-GHz radios such as the CC1101 cannot receive Thread.
 
+### Standalone screen
+
+On a [Waveshare ESP32-C6-Touch-AMOLED-2.16](https://docs.waveshare.com/ESP32-C6-Touch-AMOLED-2.16)
+the firmware detects the board and shows a live meter on its screen: every
+Thread router in earshot, grouped by network, with a signal bar. It needs only
+power, so it works from a battery or power bank with no computer attached.
+Commands over USB keep working while it runs. Other ESP32-C6 boards run without
+a screen.
+
 ## Quick start
 
 Laptop only, no probe needed:
@@ -110,7 +119,7 @@ Scans take an optional `"args": {"duration_ms": N}`. `thread_discover` takes
 
 - Join the Thread network with its credentials: mesh topology, per-router link
   quality, parent/child tables, reachability of border routers
-- Standalone mode: display, button, battery, on-device log
+- Standalone mode: more screens (Wi-Fi overlap, pairing-mode devices), touch/button, on-device log
 - Long-running monitor that records when devices drop and what changed
 - 802.15.4 sniffer mode (pcap for Wireshark)
 - 3D-printable case

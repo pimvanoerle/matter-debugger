@@ -16,6 +16,16 @@ cJSON *ble_scan(const cJSON *args, const char **err);
 void thread_init(void);
 cJSON *thread_discover(const cJSON *args, const char **err);
 cJSON *thread_energy(const cJSON *args, const char **err);
+/* Discovery on one channel (11-26), or all channels when 0. */
+cJSON *thread_discover_channel(int channel, const char **err);
+
+/* The radios share one antenna and the scans share state: hold this lock
+ * around every scan. */
+void probe_radio_lock(void);
+void probe_radio_unlock(void);
+
+/* Starts the on-device live meter if this board has a supported screen. */
+void display_start(void);
 
 /* Integer argument with a default and clamping. */
 int probe_arg_int(const cJSON *args, const char *name, int def, int min, int max);
