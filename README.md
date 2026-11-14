@@ -12,8 +12,8 @@ device you are trying to pair even advertising.
 It is built so that AI agents can use it too: the probe speaks JSON over USB,
 and the host tool includes an MCP server.
 
-> **Status: early.** The host tool and LAN checks work. The firmware compiles
-> for ESP32-C6 and ESP32-S3 but has not yet been run on hardware.
+> **Status: early.** The host tool, LAN checks and all probe scans work on an
+> ESP32-C6. The ESP32-S3 build compiles but has not been run on hardware.
 
 ## How it fits together
 
@@ -100,7 +100,6 @@ Scans take an optional `"args": {"duration_ms": N}`.
 
 ## Roadmap
 
-- Run and tune the firmware on real hardware
 - Join the Thread network with its credentials: mesh topology, per-router link
   quality, parent/child tables, reachability of border routers
 - Standalone mode: display, button, battery, on-device log

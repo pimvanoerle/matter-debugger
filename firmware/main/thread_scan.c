@@ -133,6 +133,11 @@ static cJSON *run_scan(bool energy, uint16_t duration_ms, TickType_t timeout, co
     } else if (xSemaphoreTake(s_done, timeout) != pdTRUE) {
         *err = "thread scan timed out";
     } else {
+        /* Take the 802.15.4 interface down again so its receiver does not
+         * hold the shared 2.4 GHz radio while Wi-Fi or BLE scan. */
+        esp_openthread_lock_acquire(portMAX_DELAY);
+        otIp6SetEnabled(ot, false);
+        esp_openthread_lock_release();
         return s_results;
     }
     /* On timeout the scan may still be running, so keep the callbacks'
