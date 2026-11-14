@@ -118,8 +118,11 @@ def track(port: str | None, target: str | None, log: str | None) -> None:
                 raise click.ClickException("this probe has no 802.15.4 radio")
             click.echo("Looking for Thread routers...")
             found = probe.discover(rounds=3)
-            wanted = [r for r in found if target and (
-                r["ext_addr"].endswith(target.lower()) or target.lower() in r["network_name"].lower())]
+            def matches(r: dict) -> bool:
+                return bool(target) and (r["ext_addr"].endswith(target.lower())
+                                         or target.lower() in r["network_name"].lower())
+
+            wanted = [r for r in found if matches(r)]
             if not wanted:
                 if target:
                     click.echo(f"Nothing matching '{target}'. In range:")
@@ -131,8 +134,15 @@ def track(port: str | None, target: str | None, log: str | None) -> None:
                     for r in wanted}
             click.echo("Stop with Ctrl-C.\n" + "\n" * (len(rows) - 1), nl=False)
             while True:
-                heard = {r["ext_addr"]: r["rssi"]
-                         for ch in channels for r in probe.call("thread_discover", channel=ch)}
+                heard = {}
+                for ch in channels:
+                    for r in probe.call("thread_discover", channel=ch):
+                        heard[r["ext_addr"]] = r["rssi"]
+                        if matches(r) and r["ext_addr"] not in rows:
+                            # a router that was out of range (or off) when tracking started
+                            rows[r["ext_addr"]] = {"name": r["network_name"], "rssi": None,
+                                                   "peak": r["rssi"], "age": 0}
+                            click.echo()
                 if log:
                     with open(log, "a") as f:
                         f.write(json.dumps({"time": time.time(), "rssi": {a: heard[a] for a in rows if a in heard}}) + "\n")
