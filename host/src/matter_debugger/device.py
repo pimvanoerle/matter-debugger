@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import random
 import time
 
 import serial
@@ -37,7 +38,8 @@ class Probe:
                 port = ports[0]
             transport = serial.Serial(port, 115200, timeout=0.2)
         self._io = transport
-        self._ids = itertools.count(1)
+        # Random start so a late reply to an earlier process is never mistaken for ours.
+        self._ids = itertools.count(random.randrange(1, 1 << 30))
 
     def close(self) -> None:
         self._io.close()
@@ -54,8 +56,10 @@ class Probe:
         request = {"id": req_id, "cmd": cmd}
         if args:
             request["args"] = args
-            if cmd == "ble_scan" and "duration_ms" in args and timeout is None:
-                timeout = args["duration_ms"] / 1000 + 10
+            if "duration_ms" in args and timeout is None:
+                # duration is per channel (16 of them) for the energy scan
+                scale = 16 if cmd == "thread_energy" else 1
+                timeout = scale * args["duration_ms"] / 1000 + 10
         self._io.reset_input_buffer()
         self._io.write((json.dumps(request) + "\n").encode())
         self._io.flush()

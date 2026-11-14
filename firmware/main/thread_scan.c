@@ -22,6 +22,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "hal/ieee802154_ll.h"
 #include "openthread/ip6.h"
 #include "openthread/link.h"
 #include "openthread/thread.h"
@@ -29,6 +30,7 @@
 static SemaphoreHandle_t s_ready;
 static SemaphoreHandle_t s_done;
 static cJSON *s_results;
+static uint32_t s_cca_duration; /* hardware's clear-channel-assessment time at boot */
 
 static void ot_task(void *arg)
 {
@@ -45,6 +47,7 @@ static void ot_task(void *arg)
     assert(netif);
     ESP_ERROR_CHECK(esp_netif_attach(netif, esp_openthread_netif_glue_init(&config)));
 
+    s_cca_duration = IEEE802154.ed_duration.duration;
     xSemaphoreGive(s_ready);
     esp_openthread_launch_mainloop();
 
@@ -137,6 +140,13 @@ static cJSON *run_scan(bool energy, uint16_t duration_ms, TickType_t timeout, co
          * hold the shared 2.4 GHz radio while Wi-Fi or BLE scan. */
         esp_openthread_lock_acquire(portMAX_DELAY);
         otIp6SetEnabled(ot, false);
+        if (energy) {
+            /* The ESP-IDF 5.4 driver leaves the energy-scan duration in the
+             * register that also times the clear-channel check before every
+             * transmit, which makes later transmits take that long and
+             * discovery time out. Put the original value back. */
+            ieee802154_ll_set_ed_duration(s_cca_duration);
+        }
         esp_openthread_lock_release();
         return s_results;
     }
