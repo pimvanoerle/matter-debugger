@@ -101,6 +101,18 @@ matter-debugger track 715a        # end of a router address, or part of a networ
 
 Add `--log walk.jsonl` to record every reading with a timestamp while you walk.
 
+To catch devices dropping off over hours or days, leave a watcher running on a
+machine that stays awake (no probe needed):
+
+```sh
+matter-debugger watch --node 2B=front-bedroom --node 2E=master --log watch.jsonl
+```
+
+It reports when a node stops or resumes advertising, and pings the nodes you
+name. A device that stops advertising while its neighbours carry on has fallen
+off the network; one that advertises but does not answer is registered but
+unreachable.
+
 ### For agents
 
 ```sh

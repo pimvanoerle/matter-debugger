@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 
 import click
 
-from . import __version__, analysis, lan as lan_mod
+from . import __version__, analysis, lan as lan_mod, watch as watch_mod
 from .device import Probe, ProbeError, find_ports
 
 MARKS = {"problem": ("✗", "red"), "warning": ("!", "yellow"), "ok": ("✓", "green"), "info": ("·", "cyan")}
@@ -178,6 +179,43 @@ def lan(seconds: float, as_json: bool) -> None:
         click.echo(f"  Border router {r['name']} ({r['vendor'] or '?'} {r['model'] or ''}): "
                    f"network '{r['network_name']}' xpan {r['ext_pan_id']}")
     print_findings(result["findings"])
+
+
+@main.command()
+@click.option("--node", "nodes", multiple=True, metavar="ID[=NAME]",
+              help="Node to watch closely and ping, e.g. 2B=front-bedroom. Repeatable.")
+@click.option("--fabric", help="Only this fabric (the 16 hex digits before the dash in the mDNS name).")
+@click.option("--interval", default=300, show_default=True, help="Seconds between checks.")
+@click.option("--log", type=click.Path(dir_okay=False), help="Append every check to this JSONL file.")
+def watch(nodes: tuple[str, ...], fabric: str | None, interval: int, log: str | None) -> None:
+    """Watch Matter nodes over time and report when one drops off (no probe needed).
+
+    Every node on the fabric is checked for advertising; nodes given with
+    --node are also pinged. Stop with Ctrl-C.
+    """
+    names = {n.split("=")[0].upper(): (n.split("=", 1)[1] if "=" in n else "") for n in nodes}
+    label = lambda text: re.sub(r"^(\w+)", lambda m: f"{m[1]} ({names[m[1]]})" if names.get(m[1]) else m[1], text)
+    state: dict[str, dict] = {}
+    try:
+        while True:
+            seen = watch_mod.observe(fabric, set(names))
+            events = watch_mod.update(state, seen, set(names))
+            first = not any(k == "reported" for k in state.get("_", {}))
+            for event in events:
+                node_id = event.split()[0]
+                if first and node_id not in names and "NOT" not in event:
+                    continue  # at start-up only report the watched nodes
+                click.echo(f"{watch_mod.stamp()}  {label(event)}")
+            if first:
+                click.echo(f"{watch_mod.stamp()}  watching {len(seen)} advertising node(s), "
+                           f"pinging {len(names)}; next check in {interval} s")
+            state.setdefault("_", {})["reported"] = True
+            if log:
+                with open(log, "a") as f:
+                    f.write(json.dumps({"time": time.time(), "seen": seen, "events": events}) + "\n")
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        click.echo()
 
 
 @main.command()
